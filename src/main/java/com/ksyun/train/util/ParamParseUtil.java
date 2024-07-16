@@ -1,8 +1,6 @@
 package com.ksyun.train.util;
 
-import java.io.BufferedInputStream;
 import java.io.BufferedReader;
-import java.io.FileInputStream;
 import java.io.FileReader;
 import java.lang.reflect.*;
 import java.math.BigDecimal;
@@ -10,13 +8,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Stack;
-import java.util.function.Function;
 
 public class ParamParseUtil {
     private final static Stack<Object>      objStack = new Stack<>();            //存放对象栈
     private final static Stack<Integer>     preSpaceStack = new Stack<>();       //存放缩进栈
-    private final static Stack<Class<?>>    innerClazzStack = new Stack<>();     //存放泛型参数类型栈
-    private static Class<?>                 innerClazz = null;                   //存放泛型参数类型
+    private final static Stack<Class<?>>    innerClazzStack = new Stack<>();     //存放泛型参数类型栈     //存放泛型参数类型
 
     public static int getPreSpaceNum(String s) {
         int preSpaceNum = 0;
@@ -30,10 +26,11 @@ public class ParamParseUtil {
         return preSpaceNum;
     }
 
-    public static int getFirstIndexIgnoreChar(String s, char c) {
+    public static int getFirstIndexIgnoreFirstChar(String s, char c) {
         //find first index of letter
-        for (int i = 0; i < s.length(); i++) {
-            if (s.charAt(i) != c && s.charAt(i) != ' ') {
+
+        for (int i = s.indexOf(c)+1; i < s.length(); i++) {
+            if (s.charAt(i) != ' ') {
                 return i;
             }
         }
@@ -57,7 +54,7 @@ public class ParamParseUtil {
 
     public static <T> void handler(Class<T> clz, String trimLine, int curSpaceNum) throws Exception {
         //处理a:b 和 a:
-        //todo topObj.a=new A()
+        //topObj.a=new A()
         //如果有b set
         //如果无b 可能是array或者自定义，那么push进去
         String[] splits = Arrays.stream(trimLine.split(":")).map(String::trim).toArray(String[]::new);
@@ -71,17 +68,6 @@ public class ParamParseUtil {
         if (splits.length == 1) {
             // 检查字段是否是 List 类型或其子类
             if (List.class.isAssignableFrom(field.getType())) {
-                //set paramterizedStr
-/*                innerClazz = Arrays.stream(topObj.getClass().getDeclaredClasses())
-                        .filter(e -> e.getSimpleName().equals(splits[0])).
-                        findFirst().orElse(null);*/
-                //如果不是自定义内部类
-//                if(innerClazz==null){
-                //Integer, String, BigDecimal
-                //spilts[0]="command"
-                //需要在container里面找到command
-                //objStack=container
-                //field=command
                 Type type = field.getGenericType();
                 if (type instanceof ParameterizedType) {
                     ParameterizedType pType = (ParameterizedType) type;
@@ -153,7 +139,6 @@ public class ParamParseUtil {
                 //跳过空行
                 if (line.trim().isEmpty()) continue;
                 System.out.println(line);
-                //todo 第一步
                 //弹走栈里多余的
                 int curSpaceNum = getPreSpaceNum(line);
                 while (curSpaceNum <= preSpaceStack.peek()) {
@@ -167,34 +152,32 @@ public class ParamParseUtil {
 
                 //看有无-
                 if (line.trim().charAt(0) == '-') {
-                    //todo 处理-b和- ， topObj.add(new A)
+                    //处理-b和- ， topObj.add(new A)
                     //如果是-，那么要入栈
                     //如果是-b, 那么要set
                     Object topObj = objStack.peek();
-
                     //get add method
                     Method addMethod = topObj.getClass().getDeclaredMethod("add", Object.class);
                     //get parameterized type
                     //-b
                     if (line.indexOf(":") == -1) {
-                        //todo 不是自定义的类型，那么是原始类型，String, BigDecimal
+                        //不是自定义的类型，那么是原始类型，String, BigDecimal
                         //get value
-                        String value = line.substring(getFirstIndexIgnoreChar(line, '-')).trim();
+                        String value = line.substring(getFirstIndexIgnoreFirstChar(line, '-')).trim();
                         if (String.class.isAssignableFrom(innerClazzStack.peek())) {
                             addMethod.invoke(topObj, value);
                         }
                     } else {
                         addMethod.invoke(topObj, innerClazzStack.peek().newInstance());
-                        //todo 入栈，处理-后面的
+                        //入栈，处理-后面的
                         //get last of topObj and push to stack
                         preSpaceStack.push(curSpaceNum);
                         objStack.push(((List) topObj).get(((List) topObj).size() - 1));
-                        handler(clz, line.substring(line.indexOf("-") + 1).trim(), getFirstIndexIgnoreChar(line, '-'));
+                        handler(clz, line.substring(line.indexOf("-") + 1).trim(), getFirstIndexIgnoreFirstChar(line, '-'));
                     }
                 } else {
                     handler(clz, line.trim(), curSpaceNum);
                 }
-                //todo 第二步
             }
             //return the bottom of objStack
             return (T) objStack.firstElement();
