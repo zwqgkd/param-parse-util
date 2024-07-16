@@ -1,4 +1,4 @@
-ApiVersion: v1
+ApiVersion: v3
 Metadata:
   Name: my-pod
 Cpu: 2
