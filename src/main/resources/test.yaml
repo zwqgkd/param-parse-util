@@ -1,0 +1,19 @@
+ApiVersion: v1
+Metadata:
+  Name: my-pod
+Cpu: 2
+Memory: 4.0
+Container:
+  - Name: nginx
+    Port: 8080
+    Command:
+      - /bin/bash
+      - -c
+      - sleep 20
+  - Name: mysql
+    Port: 8306
+    Environment:
+      - Key: PORT
+        Value: 3306
+      - Key: ROOT_PASSWORD
+        Value: 123456
