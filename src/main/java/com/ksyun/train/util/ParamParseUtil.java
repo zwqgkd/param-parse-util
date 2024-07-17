@@ -10,9 +10,9 @@ import java.util.List;
 import java.util.Stack;
 
 public class ParamParseUtil {
-    private final static Stack<Object> objStack = new Stack<>();            //存放对象栈
-    private final static Stack<Integer> preSpaceStack = new Stack<>();       //存放缩进栈
-    private final static Stack<Class<?>> innerClazzStack = new Stack<>();     //存放泛型参数类型栈     //存放泛型参数类型
+    private final static Stack<Object> OBJ_STACK = new Stack<>();            //存放对象栈
+    private final static Stack<Integer> PRE_SPACE_STACK = new Stack<>();       //存放缩进栈
+    private final static Stack<Class<?>> INNER_CLAZZ_STACK = new Stack<>();     //存放泛型参数类型栈     //存放泛型参数类型
 
     public static int getPreSpaceNum(String s) {
         int preSpaceNum = 0;
@@ -53,7 +53,7 @@ public class ParamParseUtil {
         //如果有b set
         //如果无b 可能是array或者自定义，那么push进去
         String[] splits = Arrays.stream(trimLine.split(":")).map(String::trim).toArray(String[]::new);
-        Object topObj = objStack.peek();
+        Object topObj = OBJ_STACK.peek();
 
         Field field = Arrays.stream(topObj.getClass().getDeclaredFields())
                 .filter(f -> splits[0].equals(uppercaseFirstChar(f.getName())))
@@ -72,14 +72,14 @@ public class ParamParseUtil {
                 Type type = field.getGenericType();
                 if (type instanceof ParameterizedType) {
                     ParameterizedType pType = (ParameterizedType) type;
-                    innerClazzStack.push(Class.forName(pType.getActualTypeArguments()[0].getTypeName()));
+                    INNER_CLAZZ_STACK.push(Class.forName(pType.getActualTypeArguments()[0].getTypeName()));
                 }
-                objStack.push(new ArrayList<>());
+                OBJ_STACK.push(new ArrayList<>());
             } else {
-                objStack.push(field.getType().newInstance());
+                OBJ_STACK.push(field.getType().newInstance());
             }
-            preSpaceStack.push(curSpaceNum);
-            field.set(topObj, objStack.peek());
+            PRE_SPACE_STACK.push(curSpaceNum);
+            field.set(topObj, OBJ_STACK.peek());
         } else {
             //含有value，那么直接需要set
             //排除skip的情况
@@ -151,8 +151,8 @@ public class ParamParseUtil {
     public static <T> T parse(Class<T> clz, String filePath) throws Exception {
         //read file
         try (BufferedReader bis = new BufferedReader(new FileReader(filePath))) {
-            objStack.push(clz.newInstance());
-            preSpaceStack.push(-1);
+            OBJ_STACK.push(clz.newInstance());
+            PRE_SPACE_STACK.push(-1);
 
             String line = null;
             while ((line = bis.readLine()) != null) {
@@ -160,63 +160,74 @@ public class ParamParseUtil {
                 if (line.trim().isEmpty()) continue;
                 System.out.println(line);
                 //弹走栈里多余的
+                /**
+                 *  todo fixbug:由于-缩进问题，可能curSpaceNum<=PRE_SPACE_STACK.peek()，导致栈顶的list也被弹走
+                 *              弹走同级的或者更低级的对象
+                 *              如何判断同级或者更低级？
+                 *              也就是缩进不小于当前行的缩进的对象&&当前行不是-开头
+                 */
                 int curSpaceNum = getPreSpaceNum(line);
-                while (curSpaceNum <= preSpaceStack.peek()) {
+                while (curSpaceNum < PRE_SPACE_STACK.peek() || curSpaceNum == PRE_SPACE_STACK.peek() && !line.trim().startsWith("-")) {
                     //如果出去的是ArrayList，那么需要pop innerClazzStack
-                    if (List.class.isAssignableFrom(objStack.peek().getClass())) {
-                        innerClazzStack.pop();
+                    if (List.class.isAssignableFrom(OBJ_STACK.peek().getClass())) {
+                        INNER_CLAZZ_STACK.pop();
                     }
-                    objStack.pop();
-                    preSpaceStack.pop();
+                    OBJ_STACK.pop();
+                    PRE_SPACE_STACK.pop();
                 }
 
                 //看有无-
                 if (line.trim().charAt(0) == '-') {
+                    //todo fixbug:由于-格式缩进随意问题，导致栈顶可能是列表上一个类型，不是列表类型
+                    while(!List.class.isAssignableFrom(OBJ_STACK.peek().getClass())){
+                        OBJ_STACK.pop();
+                        PRE_SPACE_STACK.pop();
+                    }
                     //处理-b和- ， topObj.add(new A)
                     //如果是-，那么要入栈
                     //如果是-b, 那么要set
-                    Object topObj = objStack.peek();
+                    Object topObj = OBJ_STACK.peek();
                     //get add method
                     Method addMethod = topObj.getClass().getDeclaredMethod("add", Object.class);
                     //get parameterized type
-                    //-b
+                    //有-b的情况，需要set value
                     if (!line.contains(":")) {
                         //不是自定义的类型，那么是原始类型，String, BigDecimal
                         //含有value需要直接set,且这里不会有skip注解
                         //get value
                         String value = line.substring(getFirstIndexIgnoreFirstChar(line, '-')).trim();
                         //当发现对应的value是null或者字符串"NULL"，"null"、"Null"时，能正确处理原始类型默认值
-                        if(!value.equals("null") && !value.equals("NULL") && !value.equals("Null")){
-                            if (String.class.isAssignableFrom(innerClazzStack.peek())) {
+                        if (!value.equals("null") && !value.equals("NULL") && !value.equals("Null")) {
+                            if (String.class.isAssignableFrom(INNER_CLAZZ_STACK.peek())) {
                                 addMethod.invoke(topObj, value);
-                            }else if(BigDecimal.class.isAssignableFrom(innerClazzStack.peek())) {
+                            } else if (BigDecimal.class.isAssignableFrom(INNER_CLAZZ_STACK.peek())) {
                                 addMethod.invoke(topObj, new BigDecimal(value));
-                            }else if(int.class.isAssignableFrom(innerClazzStack.peek()) || Integer.class.isAssignableFrom(innerClazzStack.peek())) {
+                            } else if (int.class.isAssignableFrom(INNER_CLAZZ_STACK.peek()) || Integer.class.isAssignableFrom(INNER_CLAZZ_STACK.peek())) {
                                 addMethod.invoke(topObj, Integer.parseInt(value));
-                            }else if(boolean.class.isAssignableFrom(innerClazzStack.peek()) || Boolean.class.isAssignableFrom(innerClazzStack.peek())) {
+                            } else if (boolean.class.isAssignableFrom(INNER_CLAZZ_STACK.peek()) || Boolean.class.isAssignableFrom(INNER_CLAZZ_STACK.peek())) {
                                 addMethod.invoke(topObj, Boolean.parseBoolean(value));
-                            }else if(long.class.isAssignableFrom(innerClazzStack.peek()) || Long.class.isAssignableFrom(innerClazzStack.peek())) {
+                            } else if (long.class.isAssignableFrom(INNER_CLAZZ_STACK.peek()) || Long.class.isAssignableFrom(INNER_CLAZZ_STACK.peek())) {
                                 addMethod.invoke(topObj, Long.parseLong(value));
-                            }else if(double.class.isAssignableFrom(innerClazzStack.peek()) || Double.class.isAssignableFrom(innerClazzStack.peek())) {
+                            } else if (double.class.isAssignableFrom(INNER_CLAZZ_STACK.peek()) || Double.class.isAssignableFrom(INNER_CLAZZ_STACK.peek())) {
                                 addMethod.invoke(topObj, Double.parseDouble(value));
-                            }else if(float.class.isAssignableFrom(innerClazzStack.peek()) || Float.class.isAssignableFrom(innerClazzStack.peek())) {
+                            } else if (float.class.isAssignableFrom(INNER_CLAZZ_STACK.peek()) || Float.class.isAssignableFrom(INNER_CLAZZ_STACK.peek())) {
                                 addMethod.invoke(topObj, Float.parseFloat(value));
-                            }else if(short.class.isAssignableFrom(innerClazzStack.peek()) || Short.class.isAssignableFrom(innerClazzStack.peek())) {
+                            } else if (short.class.isAssignableFrom(INNER_CLAZZ_STACK.peek()) || Short.class.isAssignableFrom(INNER_CLAZZ_STACK.peek())) {
                                 addMethod.invoke(topObj, Short.parseShort(value));
-                            }else if(byte.class.isAssignableFrom(innerClazzStack.peek()) || Byte.class.isAssignableFrom(innerClazzStack.peek())) {
+                            } else if (byte.class.isAssignableFrom(INNER_CLAZZ_STACK.peek()) || Byte.class.isAssignableFrom(INNER_CLAZZ_STACK.peek())) {
                                 addMethod.invoke(topObj, Byte.parseByte(value));
-                            }else if(char.class.isAssignableFrom(innerClazzStack.peek()) || Character.class.isAssignableFrom(innerClazzStack.peek())) {
+                            } else if (char.class.isAssignableFrom(INNER_CLAZZ_STACK.peek()) || Character.class.isAssignableFrom(INNER_CLAZZ_STACK.peek())) {
                                 addMethod.invoke(topObj, value.charAt(0));
-                            }else {
+                            } else {
                                 throw new RuntimeException("不支持的类型");
                             }
                         }
                     } else {
-                        addMethod.invoke(topObj, innerClazzStack.peek().newInstance());
+                        addMethod.invoke(topObj, INNER_CLAZZ_STACK.peek().newInstance());
                         //入栈，处理-后面的
                         //get last of topObj and push to stack
-                        preSpaceStack.push(curSpaceNum);
-                        objStack.push(((List<?>) topObj).get(((List<?>) topObj).size() - 1));
+                        PRE_SPACE_STACK.push(curSpaceNum);
+                        OBJ_STACK.push(((List<?>) topObj).get(((List<?>) topObj).size() - 1));
                         handler(line.substring(line.indexOf("-") + 1).trim(), getFirstIndexIgnoreFirstChar(line, '-'));
                     }
                 } else {
@@ -224,7 +235,7 @@ public class ParamParseUtil {
                 }
             }
             //return the bottom of objStack
-            return safeCast(objStack.firstElement(), clz);
+            return safeCast(OBJ_STACK.firstElement(), clz);
         }
     }
 }
